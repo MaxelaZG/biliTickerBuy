@@ -30,42 +30,44 @@ ENV BTB_SERVER_NAME="0.0.0.0"
 ENV GRADIO_SERVER_PORT=7860
 ENV BTB_DOCKER=1
 ENV DISPLAY=:99
-RUN mkdir -p /etc/supervisor/conf.d && cat > /etc/supervisor/conf.d/supervisord.conf <<'EOF'
-[supervisord]
-nodaemon=true
-user=root
 
-[program:xvfb]
-command=/usr/bin/Xvfb :99 -screen 0 1280x720x16
-autorestart=true
-priority=100
+RUN mkdir -p /etc/supervisor/conf.d
 
-[program:fluxbox]
-command=/usr/bin/fluxbox
-environment=DISPLAY=":99"
-autorestart=true
-priority=200
+RUN printf "[supervisord]\n\
+nodaemon=true\n\
+user=root\n\
+\n\
+[program:xvfb]\n\
+command=/usr/bin/Xvfb :99 -screen 0 1280x720x16\n\
+autorestart=true\n\
+priority=100\n\
+\n\
+[program:fluxbox]\n\
+command=/usr/bin/fluxbox\n\
+environment=DISPLAY=\":99\"\n\
+autorestart=true\n\
+priority=200\n\
+\n\
+[program:x11vnc]\n\
+command=/usr/bin/x11vnc -display :99 -nopw -shared -forever -loop -noxdamage -repeat -nobell -wait 50\n\
+autorestart=true\n\
+priority=300\n\
+startsecs=5\n\
+\n\
+[program:app]\n\
+command=python main.py\n\
+directory=/app\n\
+environment=DISPLAY=\":99\"\n\
+autorestart=unexpected\n\
+stopasgroup=true\n\
+killasgroup=true\n\
+startsecs=5\n\
+startretries=3\n\
+stdout_logfile=/dev/fd/1\n\
+stdout_logfile_maxbytes=0\n\
+stderr_logfile=/dev/fd/2\n\
+stderr_logfile_maxbytes=0\n\
+priority=400\n" > /etc/supervisor/conf.d/supervisord.conf
 
-[program:x11vnc]
-command=/usr/bin/x11vnc -display :99 -nopw -shared -forever -loop -noxdamage -repeat -nobell -wait 50
-autorestart=true
-priority=300
-startsecs=5
-
-[program:app]
-command=python main.py
-directory=/app
-environment=DISPLAY=":99"
-autorestart=unexpected
-stopasgroup=true
-killasgroup=true
-startsecs=5
-startretries=3
-stdout_logfile=/dev/fd/1
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/fd/2
-stderr_logfile_maxbytes=0
-priority=400
-EOF
 EXPOSE 5900 7860
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
