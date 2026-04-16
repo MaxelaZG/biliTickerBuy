@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "7860:7860"
+    cap_add:
+      - SYS_TIME
+    command: sh -c "ntpdate -s time.cloudflare.com && exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
+    restart: unless-stopped
