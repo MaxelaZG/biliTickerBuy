@@ -19,7 +19,6 @@ class ProxyTester:
             "response_time": None,
             "error": None,
             "ip_info": None,
-            "is_ipv6": None,
         }
 
         try:
@@ -37,34 +36,21 @@ class ProxyTester:
                 timeout=self.timeout,
                 headers={
                     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
-                },
-                stream=True,
+                }
             )
             end_time = time.time()
             response_time = round((end_time - start_time) * 1000, 2)  # 毫秒
-
-            # 获取是否通过IPv6连接接口
-            is_ipv6 = False
-            sock = getattr(getattr(response.raw, "_connection", None), "sock", None)
-            if sock:
-                peer = sock.getpeername()
-                is_ipv6 = len(peer) == 4
-            _ = response.content
-            response.close()
-            result["is_ipv6"] = is_ipv6
-
-
             if response.status_code == 200:
                 result["status"] = "success"
                 result["response_time"] = response_time
                 # 获取出口IP信息
-                result["ip_info"] = self._get_ip_info(session, ipv6=is_ipv6)
+                result["ip_info"] = self._get_ip_info(session)
             else:
                 result["error"] = f"B站连接失败: HTTP {response.status_code}"
                 result["status"] = "partial"
                 result["response_time"] = response_time
                 # 部分成功时也尝试获取IP
-                result["ip_info"] = self._get_ip_info(session, ipv6=is_ipv6)
+                result["ip_info"] = self._get_ip_info(session)
         except requests.exceptions.Timeout:
             result["error"] = f"连接超时 (>{self.timeout}s)"
         except requests.exceptions.ProxyError:
@@ -158,7 +144,7 @@ class ProxyTester:
             {
                 "name": "ip-api.com",
                 "url": "http://ip-api.com/json/",
-                # "ipv6": False,    # ip-api.com is IPv4 but can query IPv6 addresses
+                # ip-api.com API is IPv4-only, but can query IPv6 addresses
                 "parser": lambda data:
                 {
                     "city": data.get('city', '未知'),
