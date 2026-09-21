@@ -19,6 +19,7 @@ class ProxyTester:
             "response_time": None,
             "error": None,
             "ip_info": None,
+            "is_ipv6": None,
         }
 
         try:
@@ -37,21 +38,33 @@ class ProxyTester:
                 headers={
                     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
                 },
+                stream=True,
             )
             end_time = time.time()
             response_time = round((end_time - start_time) * 1000, 2)  # 毫秒
+
+            # 获取是否通过IPv6连接接口
+            is_ipv6 = False
+            sock = getattr(getattr(response.raw, "_connection", None), "sock", None)
+            if sock:
+                peer = sock.getpeername()
+                is_ipv6 = len(peer) == 4
+            _ = response.content
+            response.close()
+            result["is_ipv6"] = is_ipv6
+
 
             if response.status_code == 200:
                 result["status"] = "success"
                 result["response_time"] = response_time
                 # 获取出口IP信息
-                result["ip_info"] = self._get_ip_info(session)
+                result["ip_info"] = self._get_ip_info(session, ipv6=is_ipv6)
             else:
                 result["error"] = f"B站连接失败: HTTP {response.status_code}"
                 result["status"] = "partial"
                 result["response_time"] = response_time
                 # 部分成功时也尝试获取IP
-                result["ip_info"] = self._get_ip_info(session)
+                result["ip_info"] = self._get_ip_info(session, ipv6=is_ipv6)
         except requests.exceptions.Timeout:
             result["error"] = f"连接超时 (>{self.timeout}s)"
         except requests.exceptions.ProxyError:
@@ -63,36 +76,140 @@ class ProxyTester:
                 result["error"] = "网络连接失败"
         except Exception as e:
             result["error"] = f"未知错误: {str(e)}"
-
         return result
 
-    def _get_ip_info(self, session) -> str:
+    def _get_ip_info(self, session, ipv6=None) -> str:
         """获取出口IP信息"""
         # 服务列表：优先详细信息，然后降级到基础服务
+        # 默认优先从B站API获取，如果失败则尝试其他服务
         ip_services = [
+            {
+                "name": "api.bilibili.com",
+                "url": "https://api.bilibili.com/x/web-interface/zone",
+                "ipv6": None,  # Dual Stack
+                "parser": lambda data: 
+                {
+                    "ip": data.get('data', {}).get('addr', '未知'),
+                    "city": data.get('data', {}).get('city', '未知'),
+                    "isp": data.get('data', {}).get('isp', '未知')
+                },
+                "headers": {
+                    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
+                }
+            },
             {
                 "name": "ip-api.com",
                 "url": "http://ip-api.com/json/",
-                "parser": lambda data: (
-                    f"{data.get('query', '未知')} ({data.get('city', '未知')}, {data.get('isp', '未知')})"
-                ),
+                "ipv6": False,
+                "parser": lambda data: 
+                {
+                    "ip": data.get('query', '未知'),
+                    "city": data.get('city', '未知'),
+                    "isp": data.get('isp', '未知')
+                },
+            },
+            {
+                "name": "ipv4.wtfismyip.com",
+                "url": "https://ipv4.wtfismyip.com/json",
+                "ipv6": False,
+                "parser": lambda data: {
+                    "ip": data.get('YourFuckingIPAddress', '未知'),
+                    "city": data.get('YourFuckingCity', '未知'),
+                    "isp": data.get('YourFuckingISP', '未知')
+                },
+            },
+            {
+                "name": "ipv6.wtfismyip.com",
+                "url": "https://ipv6.wtfismyip.com/json",
+                "ipv6": True,
+                "parser": lambda data: {
+                    "ip": data.get('YourFuckingIPAddress', '未知'),
+                    "city": data.get('YourFuckingCity', '未知'),
+                    "isp": data.get('YourFuckingISP', '未知')
+                },
+            },
+            {
+                "name": "api4.ipify.org",
+                "url": "https://api4.ipify.org?format=json",
+                "ipv6": False,
+                "parser": lambda data: {
+                    "ip": data.get("ip", "未知")
+                },
+            },
+            {
+                "name": "api6.ipify.org",
+                "url": "https://api6.ipify.org?format=json",
+                "ipv6": True,
+                "parser": lambda data: {
+                    "ip": data.get("ip", "未知")
+                },
             },
             {
                 "name": "httpbin.org",
                 "url": "http://httpbin.org/ip",
-                "parser": lambda data: data.get("origin", "未知"),
+                "ipv6": False,
+                "parser": lambda data: {
+                    "ip": data.get("origin", "未知")
+                },
             },
         ]
 
-        for service in ip_services:
+        geo_services = [
+            {
+                "name": "ip-api.com",
+                "url": "http://ip-api.com/json/",
+                # "ipv6": False,    # ip-api.com is IPv4 but can query IPv6 addresses
+                "parser": lambda data:
+                {
+                    "city": data.get('city', '未知'),
+                    "isp": data.get('isp', '未知')
+                },
+            }
+        ]
+
+        ip, city, isp = "未知", "未知", "未知"
+        sources = []
+        # 先获取IP地址
+        for service in ip_services:     
+            if ip != "未知":
+                break
+            if service.get("ipv6") is not None and service.get("ipv6") != ipv6:
+                continue
             try:
-                ip_response = session.get(service["url"], timeout=3)
+                ip_response = session.get(
+                    service["url"], 
+                    headers=service.get("headers", {}), 
+                    timeout=3)
                 if ip_response.status_code == 200:
-                    ip_data = ip_response.json()
-                    return service["parser"](ip_data)
+                    data = ip_response.json()
+                    parsed_data = service["parser"](data)
+                    ip = parsed_data.get("ip", ip)
+                    city = parsed_data.get("city", city)
+                    isp = parsed_data.get("isp", isp)
+                    sources.append(service["name"])
             except Exception:
                 continue
 
+        # 如只获取到IP则尝试再获取城市和ISP信息
+        if ip != "未知":
+            if city == "未知" and isp == "未知":
+                for service in geo_services:
+                    if service.get("ipv6", None) and service["ipv6"] != ipv6:
+                        continue
+                    try:
+                        geo_response = session.get(
+                            service["url"]+ip, timeout=3)
+                        if geo_response.status_code == 200:
+                            data = geo_response.json()
+                            parsed_data = service["parser"](data)
+                            city = parsed_data.get("city", city)
+                            isp = parsed_data.get("isp", isp)
+                            sources.append(service["name"])
+                    except Exception:
+                        continue
+
+            return f"{ip}{f' ({city}, {isp})' if city != '未知' or isp != '未知' else ''}, 数据来源: {', '.join(sources)}"
+        
         return "IP获取失败"
 
     # 验证代理格式是否正确
