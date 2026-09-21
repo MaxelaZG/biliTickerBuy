@@ -159,7 +159,9 @@ class ProxyTester:
         for service in ip_services:     
             if ip != "未知":
                 break
-            if service.get("ipv6") is not None and service.get("ipv6") != ipv6:
+            if ipv6 is not None \
+                and service.get("ipv6") is not None \
+                and service.get("ipv6") != ipv6:
                 continue
             try:
                 ip_response = session.get(
